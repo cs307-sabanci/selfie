@@ -11257,6 +11257,9 @@ uint64_t* new_context() {
 
   used_contexts = context;
 
+  // Need to set the PID while the context is being created
+  set_pid(context);
+
   return context;
 }
 

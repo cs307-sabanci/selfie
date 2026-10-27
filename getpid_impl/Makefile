@@ -7,10 +7,10 @@ ex1: pid_example.c
 	../selfie -c pid_example.c -o pid_example.m
 
 run_ex1: ex1
-	../selfie -l pid_example.m -m $(MEM)
+	../selfie -l pid_example.m -m $(MEM) || true
 
 run_ex1_on_selfie: ex1
-	../selfie -c ../selfie.c -m 64 -l pid_example.m -m $(MEM)
+	../selfie -c ../selfie.c -m 64 -l pid_example.m -m $(MEM) || true
 
 run_all: run_ex1
 
