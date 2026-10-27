@@ -1286,6 +1286,9 @@ void     emit_malloc();
 uint64_t try_brk(uint64_t* context, uint64_t new_program_break);
 void     implement_brk(uint64_t* context);
 
+void emit_getpid();
+void implement_getpid(uint64_t* context);
+
 uint64_t is_boot_level_zero();
 
 // ------------------------ GLOBAL CONSTANTS -----------------------
@@ -1300,6 +1303,9 @@ uint64_t SYSCALL_READ   = 63;
 uint64_t SYSCALL_WRITE  = 64;
 uint64_t SYSCALL_OPENAT = 56;
 uint64_t SYSCALL_BRK    = 214;
+
+// The system call code for getpid()
+uint64_t SYSCALL_GETPID  = 172;
 
 /* DIRFD_AT_FDCWD corresponds to AT_FDCWD in fcntl.h and
    is passed as first argument of the openat system call
@@ -2008,11 +2014,16 @@ void reset_profiler() {
 // | 30 | gcs counter     | number of gc runs in gc period
 // | 31 | gc enabled      | flag indicating whether to use gc or not
 // +----+-----------------+
+// | 32 | pid             | unique process id
 
 // number of entries of a machine context:
-// 14 uint64_t + 6 uint64_t* + 1 char* + 7 uint64_t + 2 uint64_t* + 2 uint64_t entries
+// 14 uint64_t + 6 uint64_t* + 1 char* + 7 uint64_t + 2 uint64_t* + 3 uint64_t entries
 // extended in the symbolic execution engine and the Boehm garbage collector
-uint64_t CONTEXTENTRIES = 32;
+uint64_t CONTEXTENTRIES = 33;
+
+// Global PID counter
+// Starts from 1 (as in Linux)
+uint64_t PID_COUNTER = 1;
 
 uint64_t* allocate_context(); // declaration avoids warning in the Boehm garbage collector
 
@@ -2056,6 +2067,9 @@ uint64_t free_list_head(uint64_t* context) { return (uint64_t) (context + 29); }
 uint64_t gcs_in_period(uint64_t* context)  { return (uint64_t) (context + 30); }
 uint64_t use_gc_kernel(uint64_t* context)  { return (uint64_t) (context + 31); }
 
+// The function to retrieve the address of PID
+uint64_t pid(uint64_t* context)            { return (uint64_t) (context + 32); }
+
 uint64_t* get_next_context(uint64_t* context)    { return (uint64_t*) *context; }
 uint64_t* get_prev_context(uint64_t* context)    { return (uint64_t*) *(context + 1); }
 uint64_t  get_pc(uint64_t* context)              { return             *(context + 2); }
@@ -2091,6 +2105,9 @@ uint64_t* get_free_list_head(uint64_t* context) { return (uint64_t*) *(context +
 uint64_t  get_gcs_in_period(uint64_t* context)  { return             *(context + 30); }
 uint64_t  get_use_gc_kernel(uint64_t* context)  { return             *(context + 31); }
 
+// The function to retrieve the PID
+uint64_t get_pid(uint64_t* context)             { return *(context + 32); } 
+
 void set_next_context(uint64_t* context, uint64_t* next)     { *context        = (uint64_t) next; }
 void set_prev_context(uint64_t* context, uint64_t* prev)     { *(context + 1)  = (uint64_t) prev; }
 void set_pc(uint64_t* context, uint64_t pc)                  { *(context + 2)  = pc; }
@@ -2125,6 +2142,9 @@ void set_used_list_head(uint64_t* context, uint64_t* used_list_head) { *(context
 void set_free_list_head(uint64_t* context, uint64_t* free_list_head) { *(context + 29) = (uint64_t) free_list_head; }
 void set_gcs_in_period(uint64_t* context, uint64_t gcs)              { *(context + 30) = gcs; }
 void set_use_gc_kernel(uint64_t* context, uint64_t use)              { *(context + 31) = use; }
+
+// The function to set the PID
+void set_pid(uint64_t* context) { *(context + 32) = PID_COUNTER; PID_COUNTER = PID_COUNTER + 1; }
 
 // -----------------------------------------------------------------
 // ---------------------------- MEMORY -----------------------------
@@ -6374,6 +6394,10 @@ void selfie_compile() {
 
   emit_switch();
 
+  // getpid() must also be emitted
+  // so that there is info in the compiled C* code about getpid()
+  emit_getpid();
+
   if (GC_ON) {
     emit_fetch_stack_pointer();
     emit_fetch_global_pointer();
@@ -8169,6 +8193,43 @@ void implement_brk(uint64_t* context) {
   } else
     // attempt to update program break failed
     *(get_regs(context) + REG_A0) = previous_program_break;
+
+  set_pc(context, get_pc(context) + INSTRUCTIONSIZE);
+
+  if (debug_syscalls) {
+    printf(" -> ");
+    print_register_hexadecimal(REG_A0);
+    println();
+  }
+}
+
+// The functions for getpid()
+
+// The info for getpid() into the compiled C* code
+void emit_getpid() {
+  create_symbol_table_entry(GLOBAL_TABLE, string_copy("getpid"),
+    0, PROCEDURE, UINT64_T, 0, code_size);
+
+  // No arguments for getpid()
+  emit_addi(REG_A1, REG_ZR, 0);
+  emit_addi(REG_A2, REG_ZR, 0);
+  emit_addi(REG_A7, REG_ZR, SYSCALL_GETPID);
+
+  emit_ecall();
+
+  // jump back to caller, return value is in REG_A0
+  emit_jalr(REG_ZR, REG_RA, 0);
+}
+
+// The function that implements the C* function uint64_t getpid();
+void implement_getpid(uint64_t* context) {
+  if (debug_syscalls) {
+    printf("(getpid): ");
+    printf(" |- ");
+    print_register_hexadecimal(REG_A0);
+  }
+
+  *(get_regs(context) + REG_A0) = get_pid(context);
 
   set_pc(context, get_pc(context) + INSTRUCTIONSIZE);
 
@@ -11858,6 +11919,10 @@ uint64_t handle_system_call(uint64_t* context) {
     implement_write(context);
   else if (a7 == SYSCALL_OPENAT)
     implement_openat(context);
+  // If the system call getpid() is encountered,
+  // then it is also handled
+  else if (a7 == SYSCALL_GETPID)
+    implement_getpid(context);
   else if (a7 == SYSCALL_EXIT) {
     implement_exit(context);
 

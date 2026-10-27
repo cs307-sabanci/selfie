@@ -19,3 +19,6 @@ rotor-32
 
 # models the rotor assignments regenerate
 assignments/rotor-*/*-rotorized.btor2
+
+.vscode/
+.django-stub-gen/

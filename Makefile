@@ -459,3 +459,4 @@ clean:
 	rm -f tools/*.btor2
 	rm -f selfie selfie-32 selfie.h selfie-gc.h selfie-gc-nomain.h selfie.exe
 	rm -f babysat buzzr monster beator beator-32 rotor rotor-32
+	rm -f getpid_impl/*.m
